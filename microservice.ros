@@ -1,0 +1,212 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+(progn ;;init forms
+  (ros:ensure-asdf)
+  #+quicklisp(ql:quickload '(
+                             hunchentoot
+                             easy-routes
+                             com.inuoe.jzon
+                             bknr.datastore
+                             ironclad babel
+                             bordeaux-threads
+                             cl-base64) :silent t)
+  )
+
+(declaim (optimize (speed 3) (safety 1) (debug 1)))
+
+(defpackage :ros.script.microservice.3995270669
+  (:use :cl))
+
+(in-package :ros.script.microservice.3995270669)
+
+(defparameter *object-storage* (make-pathname :directory 
+                                              '(:absolute 
+                                                 "dev"
+                                                 "shm"
+                                                 "objstore")))
+(defparameter *port* 11000)
+(defparameter *acceptor* (make-instance 'easy-routes:routes-acceptor :port *port*))
+(defparameter *log-path* "/tmp/microservice.log")
+
+(defclass shorten-url (bknr.datastore:store-object)
+  ((short-url :initarg :short-url
+              :reader shorten-url-short-url
+              :index-type bknr.datastore::string-unique-index
+              :index-reader shorten-url-by-short-url
+              :index-values all-shorten-urls)
+   (long-url  :initarg :long-url :reader shorten-url-long-url))
+  (:metaclass bknr.datastore:persistent-class))
+
+(defun make-shorten-url (long-url)
+  "Converts full URL to md5 hash"
+  (let ((data (babel:string-to-octets long-url :encoding :utf-8)))
+    (do* ((curr (ironclad:digest-sequence :md5 data)
+                (ironclad:digest-sequence :md5 curr))
+          (shrt (subseq (cl-base64:usb8-array-to-base64-string curr :uri t) 0 7)
+                (subseq (cl-base64:usb8-array-to-base64-string curr :uri t) 0 7)))
+      ((not (shorten-url-by-short-url shrt))
+       (values shrt (make-instance 'shorten-url :short-url shrt :long-url long-url))))))
+
+(defmacro with-text (&body body) "defines an easy-route handler for text"
+`(progn
+  (setf (hunchentoot:content-type*) "text/plain")
+  (handler-case
+      (progn ,@body)
+    (error (c)
+         (setf (hunchentoot:return-code*) hunchentoot:+http-internal-server-error+)
+         (format nil "Internal Server Error: ~a" c)))))
+
+(defmacro with-json (&body body)
+  "defines an easy-route handler"
+  `(progn
+     (setf (hunchentoot:content-type*) "application/json")
+     (handler-case
+       (let ((response (make-hash-table)))
+         (com.inuoe.jzon:stringify (progn ,@body)))
+       (error (c)
+         (setf (hunchentoot:return-code*) hunchentoot:+http-internal-server-error+)
+         (com.inuoe.jzon:stringify (list :|error| "Internal Server Error"
+                                         :|message| (format nil "~a" c)))))))
+(defmacro ok ()
+  "Returns a json message on 200"
+  `(progn
+     (setf (hunchentoot:return-code*) 200)
+     (list :|status| 200 :|message| "OK")))
+
+(defun unimplimented (identifier)
+  "Returns a json message on 501"
+  (setf (hunchentoot:return-code*) 501)
+  (list :|error| "not found"
+        :|message| (format nil "~a not implimented" identifier)))
+
+(defun notfound (identifier)
+  "Returns a json message on 404"
+  (setf (hunchentoot:return-code*) 404)
+  (list :|error| "not found"
+        :|message| (format nil "~a not found" identifier)))
+
+(defun notauthenticated (identifier)
+  "Returns a json message on 401"
+  (setf (hunchentoot:return-code*) 401)
+  (list :|error| "not authorized"
+        :|message| (format nil "~a not authenticated" identifier)))
+
+(defun notauthorized (identifier)
+  "Returns a json message on 403"
+  (setf (hunchentoot:return-code*) 403)
+  (list :|error| "not authorized"
+        :|message| (format nil "~a not authorized" identifier)))
+
+(defmacro redirect! (url)
+  `(return-from route (hunchentoot:redirect ,url)))
+
+(defmacro route! ((&key name path (method :GET) (parse-body t) (content-type :json)) &body body)
+  "Factory router macro"
+  `(easy-routes:defroute ,name (,path :method ,method) () 
+    (block route
+      (let* (,@(when parse-body
+                `((body (let ((raw (hunchentoot:raw-post-data :want-stream nil :force-text t)))
+                          (cond ((and raw (plusp (length raw))) (com.inuoe.jzon:parse raw))
+                                (t (make-hash-table :test 'equal))))))))
+         (declare (ignorable body))
+         ,(ecase content-type
+            (:json `(with-json ,@body))
+            (:text `(with-text ,@body)))))))
+
+(defun parse-args (argv)
+  "Parses ARGV into options plist"
+  (let ((opts (list :daemon nil :port nil :storage nil :help nil :log-path nil)))
+    (loop while argv
+          for arg = (pop argv)
+          do (cond ((string= arg "-d") (setf (getf opts :daemon) t))
+                   ((string= arg "-p") (setf (getf opts :port) t))
+                   ((string= arg "-h") (setf (getf opts :help) t))
+                   ((string= arg "-s") (setf (getf opts :storage) (pop argv)))
+                   ((string= arg "-l") (setf (getf opts :log-path) (pop argv)))
+                   (t (warn "Unknown argument: ~a" arg))))
+    opts))
+
+(defun daemonize ()
+  "fork and detach"
+#+sbcl
+(progn
+  (require :sb-posix)
+  (let ((pid (sb-posix:fork)))
+    (cond ((plusp pid) (sb-ext:exit :code 0 :abort t))
+          (t (sb-posix:setsid)
+             (let ((out (open *log-path*
+                              :direction :output
+                              :if-exists :append
+                              :if-does-not-exist :create)))
+               (setf *standard-output* out
+                     *error-output* out))))))
+#-sbcl
+(warn "Daemonize only implemented for SBCL."))
+
+(defun main (&rest argv)
+  (declare (ignorable argv))
+  (let ((opts (parse-args argv)))
+    (cond ((getf opts :help)
+           (format t "Usage: microservice.ros [-d] [-p N] [-s PATH]~%")
+           (sb-ext:exit :code 0))
+          (t
+            (when (getf opts :port)     (setf *port*           (getf opts :port)))
+            (when (getf opts :log-path) (setf *log-path*       (getf opts :log-path)))
+            (when (getf opts :storage)  (setf *object-storage* (make-pathname :directory 
+                                              (list* :absolute (rest 
+                                                                 (pathname-directory
+                                                                   (parse-namestring 
+                                                                     (getf opts :storage))))))))
+            (when (getf opts :daemon) (daemonize)))))
+
+  (ensure-directories-exist *object-storage* :verbose nil)
+
+  (make-instance 'bknr.datastore:mp-store
+                 :directory *object-storage*
+                 :subsystems (list
+                             (make-instance 'bknr.datastore:store-object-subsystem)))
+
+  (route! (:name handle-metrics :path "/metrics" :content-type :text) (notfound "metrics"))
+  (route! (:name handle-healthz :path "/healthz") (ok))
+
+  (route! (:name handle-root-update :path "/:shrt" :method :PUT) 
+    (progn
+      (declare (ignorable shrt))
+      (unimplimented "root update")))
+
+  (route! (:name handle-root-delete :path "/:shrt" :method :DELETE) 
+    (progn
+      (declare (ignorable shrt))
+      (unimplimented "root delete")))
+
+  (route! (:name handle-root-read :path "/:shrt")
+    (let ((url-obj (shorten-url-by-short-url shrt)))
+          (cond (url-obj (redirect! (shorten-url-long-url url-obj)))
+                (t       (notfound shrt)))))
+
+  (route! (:name handle-root-create :path "/" :method :POST)
+    (let* ((long-url (gethash "long-url" body))
+           (shrt (make-shorten-url long-url)))
+      (setf (gethash "short-url" response) shrt)
+      response))
+
+  (let ((shutdown-semaphore (bt:make-semaphore :name "server-shutdown")))
+    #+sbcl
+    (sb-sys:enable-interrupt sb-unix:sigterm
+                              (lambda (&rest args)
+                                (declare (ignore args))
+                                (bt:signal-semaphore shutdown-semaphore)))
+
+    (hunchentoot:start *acceptor*)
+    (format t "Server started on port ~A...~%" *port*)
+
+    (handler-case (bt:wait-on-semaphore shutdown-semaphore)
+        (sb-sys:interactive-interrupt () (format t "~&Interrupt caught.~%")))
+
+    (format t "~&Shutting down...~%")
+    (hunchentoot:stop *acceptor* :soft t))
+)
+;;; vim: set ft=lisp lisp:
