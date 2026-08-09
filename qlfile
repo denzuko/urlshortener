@@ -6,3 +6,5 @@ ql ironclad
 ql babel
 ql cl-base64
 ql bordeaux-threads
+ql fiveam
+github 40ants/doc

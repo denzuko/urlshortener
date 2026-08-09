@@ -1,2 +1,4 @@
 .qlot
 microservice
+*.swp
+.*.swp

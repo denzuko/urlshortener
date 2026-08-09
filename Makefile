@@ -10,6 +10,9 @@ $(BUILDROOT):
 $(BUILDROOT)/$(TARGET): $(BUILDROOT)
 	@ros dump executable $(TARGET).ros -o $@
 
+build/$(PREFIX)/man/man1:
+	@pandoc -s -t man build/microservice.md -o $<
+
 $(TARGET).tgz: $(BUILDROOT)/$(TARGET)
 	@tar zcvf $@ -C build $(shell echo "$(PREFIX)" | cut -d/ -f1)
 
@@ -20,4 +23,4 @@ clean:
 	@rm -Rf build
 
 distclean: clean
-	@rm $(TARGET).tgz
+	@rm $(TARGET).tgz .*.swp

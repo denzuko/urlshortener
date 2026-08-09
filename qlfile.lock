@@ -34,3 +34,11 @@
  (:class qlot/source/ql:source-ql
   :initargs (:%version :latest)
   :version "ql-2024-10-12"))
+("fiveam" .
+ (:class qlot/source/ql:source-ql
+  :initargs (:%version :latest)
+  :version "ql-2024-10-12"))
+("doc" .
+ (:class qlot/source/github:source-github
+  :initargs (:repos "40ants/doc" :ref nil :branch nil :tag nil)
+  :version "github-5b0d0ba89eb39bb78721b9d7b7384d276471ad6b"))

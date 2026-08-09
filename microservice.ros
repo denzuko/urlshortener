@@ -17,8 +17,26 @@ exec ros -Q -- $0 "$@"
 
 (declaim (optimize (speed 3) (safety 1) (debug 1)))
 
+(defpackage :ros.script.microservice.3995270669/doc
+  (:use :cl :40ants-doc))
+
 (defpackage :ros.script.microservice.3995270669
   (:use :cl))
+
+(in-package :ros.script.microservice.3995270669/doc)
+(defsection @microservice-manual (:title "microservice.ros — Roswell URL Shortener")
+  "A small Hunchentoot/easy-routes URL-shortener service, backed by
+   bknr.datastore, with JSON and Prometheus-text response modes."
+  (main function)
+  (route! macro)
+  (with-json macro)
+  (with-text macro)
+  (redirect! macro)
+  (notfound function)
+  (ok macro)
+  (make-shorten-url function)
+  (parse-args function)
+  (daemonize function))
 
 (in-package :ros.script.microservice.3995270669)
 
@@ -30,6 +48,8 @@ exec ros -Q -- $0 "$@"
 (defparameter *port* 11000)
 (defparameter *acceptor* (make-instance 'easy-routes:routes-acceptor :port *port*))
 (defparameter *log-path* "/tmp/microservice.log")
+
+(defvar *start-time* (get-universal-time))
 
 (defclass shorten-url (bknr.datastore:store-object)
   ((short-url :initarg :short-url
@@ -49,6 +69,24 @@ exec ros -Q -- $0 "$@"
                 (subseq (cl-base64:usb8-array-to-base64-string curr :uri t) 0 7)))
       ((not (shorten-url-by-short-url shrt))
        (values shrt (make-instance 'shorten-url :short-url shrt :long-url long-url))))))
+
+(defun plist->hash (x)
+  "Recursively converts plists (lists of alternating keyword keys and
+   values) into hash-tables so COM.INUOE.JZON:STRINGIFY serializes
+   them as JSON objects rather than arrays. Plain lists (already
+   hash-tables, or genuine sequences meant to stay JSON arrays) pass
+   through unconverted at that level."
+  (cond ((hash-table-p x)
+         (let ((h (make-hash-table :test 'equal)))
+           (maphash (lambda (k v) (setf (gethash k h) (plist->hash v))) x)
+           h))
+        ((and (consp x) (keywordp (car x)) (evenp (length x)))
+         (let ((h (make-hash-table :test 'equal)))
+           (loop for (k v) on x by #'cddr
+                 do (setf (gethash k h) (plist->hash v)))
+           h))
+        ((consp x) (mapcar #'plist->hash x))
+        (t x)))
 
 (defmacro with-text (&body body) "defines an easy-route handler for text"
 `(progn
@@ -70,6 +108,21 @@ exec ros -Q -- $0 "$@"
          (setf (hunchentoot:return-code*) hunchentoot:+http-internal-server-error+)
          (com.inuoe.jzon:stringify (list :|error| "Internal Server Error"
                                          :|message| (format nil "~a" c)))))))
+
+(defmacro with-auth ((&key method) &body body)
+  "Authentication/authorization gate. :METHOD selects :KRB5, :OIDC, or
+   :AUTHZ. None are implemented yet -- each currently reports 501 via
+   UNIMPLIMENTED (fail-closed; BODY never runs) rather than silently
+   allowing access or erroring. When a real backend lands, its branch
+   should perform the credential check and COND the result into: BODY
+   on success, (NOTAUTHENTICATED ...) for missing/invalid credentials,
+   or (NOTAUTHORIZED ...) for valid-but-insufficient permission."
+  (declare (ignore body))
+  (ecase method
+    (:krb5  `(unimplimented "krb5 keytab auth"))
+    (:oidc  `(unimplimented "OIDC auth"))
+    (:authz `(unimplimented "authz auth"))))
+
 (defmacro ok ()
   "Returns a json message on 200"
   `(progn
@@ -103,7 +156,7 @@ exec ros -Q -- $0 "$@"
 (defmacro redirect! (url)
   `(return-from route (hunchentoot:redirect ,url)))
 
-(defmacro route! ((&key name path (method :GET) (parse-body t) (content-type :json)) &body body)
+(defmacro route! ((&key name path (method :GET) (parse-body t) (content-type :json) (auth nil)) &body body)
   "Factory router macro"
   `(easy-routes:defroute ,name (,path :method ,method) () 
     (block route
@@ -112,9 +165,12 @@ exec ros -Q -- $0 "$@"
                           (cond ((and raw (plusp (length raw))) (com.inuoe.jzon:parse raw))
                                 (t (make-hash-table :test 'equal))))))))
          (declare (ignorable body))
-         ,(ecase content-type
-            (:json `(with-json ,@body))
-            (:text `(with-text ,@body)))))))
+         ,(let ((inner (if auth
+                         `(with-auth (,@auth) ,@body)
+                         `(progn ,@body))))
+            (ecase content-type
+              (:json `(with-json (plist-hash ,@body)))
+              (:text `(with-text ,@body))))))))
 
 (defun parse-args (argv)
   "Parses ARGV into options plist"
@@ -169,7 +225,41 @@ exec ros -Q -- $0 "$@"
                  :subsystems (list
                              (make-instance 'bknr.datastore:store-object-subsystem)))
 
-  (route! (:name handle-metrics :path "/metrics" :content-type :text) (notfound "metrics"))
+(route! (:name handle-swagger :path "/swagger.json")
+  (list :|openapi| "3.0.3"
+        :|info| (list :|title| "URL Shortener" :|version| "1.0.0")
+        :|paths|
+        (list :|/|
+              (list :|post| (list :|summary| "Create a short URL"
+                                   :|responses| (list :|200| (list :|description| "Short URL created"))))
+              :|/{shrt}|
+              (list :|get|    (list :|summary| "Resolve and redirect"
+                                     :|responses| (list :|302| (list :|description| "Redirect to the long URL")
+                                                         :|404| (list :|description| "Short URL not found")))
+                    :|put|    (list :|summary| "Update (unimplemented)"
+                                     :|responses| (list :|501| (list :|description| "Not implemented")))
+                    :|delete| (list :|summary| "Delete (unimplemented)"
+                                     :|responses| (list :|501| (list :|description| "Not implemented"))))
+              :|/metrics|
+              (list :|get| (list :|summary| "Prometheus metrics"
+                                  :|responses| (list :|200| (list :|description| "Metrics in Prometheus text format"))))
+              :|/healthz|
+              (list :|get| (list :|summary| "Health check"
+                                  :|responses| (list :|200| (list :|description| "Service is healthy"))))))
+
+  (route! (:name handle-metrics :path "/metrics" :content-type :text) 
+          (format nil "~
+# HELP urlshortener_uptime_seconds Seconds since the process started. 
+# TYPE urlshortener_uptime_seconds gauge
+urlshortener_uptime_seconds ~D
+# HELP urlshortener_urls_total Total short URLS stored. 
+# TYPE urlshortener_urls_total gauge
+urlshortener_urls_total ~D
+"
+        (- (get-universal-time) *start-time*)
+        (length (all-shorten-urls))
+))
+
   (route! (:name handle-healthz :path "/healthz") (ok))
 
   (route! (:name handle-root-update :path "/:shrt" :method :PUT) 
