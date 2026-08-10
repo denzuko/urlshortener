@@ -134,7 +134,7 @@ urlshortener_urls_total ~D
 
   (route! (:name handle-healthz :path "/healthz") (ok))
   
-  (route! (:name handle-root-delete :path "/:shrt" :method :PUT)
+  (route! (:name handle-root-update :path "/:shrt" :method :PUT)
           (unimplimented (format nil "root update (~a)" shrt)))
 
   (route! (:name handle-root-delete :path "/:shrt" :method :DELETE)
