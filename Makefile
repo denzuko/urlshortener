@@ -31,6 +31,8 @@ test: tests.ros
 
 doc: $(MANROOT)/$(TARGET).1 docs.ros
 
+bin: $(BUILDROOT)/$(TARGET) $(TARGET).ros
+
 clean:
 	@-rm -Rf build
 
