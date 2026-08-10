@@ -25,16 +25,20 @@ exec ros -Q -- $0 "$@"
 
 (in-package :ros.script.microservice.3995270669)
 
+(defvar *start-time* (get-universal-time))
+(defvar *schema-version* "v1"
+  "Bump anytime the object class gets updated so the objectstore doesn't break")
+
 (defparameter *object-storage* (make-pathname :directory 
                                               '(:absolute 
                                                  "dev"
                                                  "shm"
-                                                 "objstore")))
+                                                 "objstore"
+                                                 *schema-version*)))
 (defparameter *port* 11000)
 (defparameter *acceptor* (make-instance 'easy-routes:routes-acceptor :port *port*))
 (defparameter *log-path* "/tmp/microservice.log")
 
-(defvar *start-time* (get-universal-time))
 
 (defun parse-args (argv)
   "Parses ARGV into options plist"
