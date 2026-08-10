@@ -67,8 +67,8 @@
 
 (defun call-with-response (content-type serializer error-formatter thunk)
   "Runs THUNK, setting CONTENT-TYPE and serializing THUNK's return value via
-  the serializier. On error, sets a 500 status and serializes an error
-  payload via th error-formater"
+  the serializer. On error, sets a 500 status and serialises an error
+  payload via the error-formater"
   (setf (hunchentoot:content-type*) content-type)
   (handler-case
     (funcall serializer (funcall thunk))
@@ -160,5 +160,5 @@
                          `(progn ,@body))))
             (ecase content-type
               (:json `(with-json (plist->hash ,inner)))
-              (:text `(with-text ,inner))))))))
+              (:text `(with-text ,inner)))))))))
 

@@ -36,9 +36,7 @@ exec ros -Q -- $0 "$@"
                                                  "objstore"
                                                  *schema-version*)))
 (defparameter *port* 11000)
-(defparameter *acceptor* (make-instance 'easy-routes:routes-acceptor :port *port*))
 (defparameter *log-path* "/tmp/microservice.log")
-
 
 (defun parse-args (argv)
   "Parses ARGV into options plist"
@@ -79,7 +77,8 @@ exec ros -Q -- $0 "$@"
 
 (defun main (&rest argv)
   (declare (ignorable argv))
-  (let ((opts (parse-args argv)))
+  (let ((opts (parse-args argv))
+        (acceptor nil))
     (cond ((getf opts :help)
            (format t "Usage: microservice.ros [-d] [-p PORT_NUM] [-s STORAGE_PATH] [-l LOG_PATH]~%")
            (sb-ext:exit :code 0))
@@ -161,13 +160,15 @@ urlshortener_urls_total ~D
                                 (declare (ignore args))
                                 (bt:signal-semaphore shutdown-semaphore)))
 
-    (hunchentoot:start *acceptor*)
+    (setf acceptor (make-instance 'easy-routes:routes-acceptor :port *port*))
+
+    (hunchentoot:start acceptor)
     (format t "Server started on port ~A...~%" *port*)
 
     (handler-case (bt:wait-on-semaphore shutdown-semaphore)
         (sb-sys:interactive-interrupt () (format t "~&Interrupt caught.~%")))
 
     (format t "~&Shutting down...~%")
-    (hunchentoot:stop *acceptor* :soft t))
+    (hunchentoot:stop acceptor :soft t))
 )
 ;;; vim: set ft=lisp lisp:
