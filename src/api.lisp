@@ -68,7 +68,7 @@
 (defun call-with-response (content-type serializer error-formatter thunk)
   "Runs THUNK, setting CONTENT-TYPE and serializing THUNK's return value via
   the serializer. On error, sets a 500 status and serialises an error
-  payload via the error-formater"
+  payload via the error-formatter"
   (setf (hunchentoot:content-type*) content-type)
   (handler-case
     (funcall serializer (funcall thunk))
