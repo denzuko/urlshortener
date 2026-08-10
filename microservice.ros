@@ -50,7 +50,7 @@ exec ros -Q -- $0 "$@"
             (parsed-value (let ((arg-value ,raw)) ,parse-form)))
        (cond ,@(loop for (fail-test error-format) in validations
                      collect `(,fail-test (warn ,error-format ,raw) (uiop:quit 1)))
-             (t (setf getf opts ,key) parsed-value)))))
+             (t (setf (getf opts ,key) parsed-value))))))
 
 (defmacro set-config-boolean (key)
   "Toggles KEY to T in enclosing OPTS plist"
@@ -68,7 +68,7 @@ exec ros -Q -- $0 "$@"
                    ((string= arg "-l") (pop-config-value :log-pat arg-value))
                    ((string= arg "-p") (pop-config-value :port
                                         (and arg-value (parse-integer arg-value :junk-allowed t))
-                                        ((typep parsed-num '(integer 1025 65535))
+                                        ((not (typep parsed-value '(integer 1025 65535)))
                                          "Port number ~s was not in range of 1025-65535")))
                    (t (warn "Unknown argument: ~a" arg))))
     opts))
