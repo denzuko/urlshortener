@@ -8,3 +8,4 @@ ql cl-base64
 ql bordeaux-threads
 ql fiveam
 github 40ants/doc
+ql uiop
