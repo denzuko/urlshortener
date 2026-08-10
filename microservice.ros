@@ -65,7 +65,7 @@ exec ros -Q -- $0 "$@"
                    ((string= arg "-h") (set-config-boolean :help))
                    ((string= arg "-s") (pop-config-value :storage
                                          (uiop:ensure-directory-pathname arg-value)))
-                   ((string= arg "-l") (pop-config-value :log-pat arg-value))
+                   ((string= arg "-l") (pop-config-value :log-path arg-value))
                    ((string= arg "-p") (pop-config-value :port
                                         (and arg-value (parse-integer arg-value :junk-allowed t))
                                         ((not (typep parsed-value '(integer 1025 65535)))
