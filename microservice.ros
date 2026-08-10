@@ -30,7 +30,7 @@ exec ros -Q -- $0 "$@"
   "Bump anytime the object class gets updated so the objectstore doesn't break")
 
 (defparameter *object-storage* (make-pathname :directory 
-                                              '(:absolute 
+                                              (list :absolute 
                                                  "dev"
                                                  "shm"
                                                  "objstore"

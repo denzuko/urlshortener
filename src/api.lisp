@@ -23,6 +23,7 @@
            #:shorten-url-long-url
            #:shorten-url-by-short-url
            #:shorten-url
+           #:all-shorten-urls
            #:plist->hash))
 
 (in-package :microservice)
@@ -48,9 +49,9 @@
 
 (defun plist->hash (x)
   "Recursively converts plists (lists of alternating keyword keys and
-   values) into hash-tables so COM.INUOE.JZON:STRINGIFY serializes
-   them as JSON objects rather than arrays. Plain lists (already
-   hash-tables, or genuine sequences meant to stay JSON arrays) pass
+   values) into hash-tables so com.inuoe.jzon:stringify serializes
+   them as json objects rather than arrays. Plain lists (already
+   hash-tables, or genuine sequences meant to stay json arrays) pass
    through unconverted at that level."
   (cond ((hash-table-p x)
          (let ((h (make-hash-table :test 'equal)))
@@ -66,8 +67,8 @@
 
 (defun call-with-response (content-type serializer error-formatter thunk)
   "Runs THUNK, setting CONTENT-TYPE and serializing THUNK's return value via
-  serializier. On error, setgs 500 status and serialzies an error
-  payload via ERROR-FORMATER"
+  the serializier. On error, sets a 500 status and serializes an error
+  payload via th error-formater"
   (setf (hunchentoot:content-type*) content-type)
   (handler-case
     (funcall serializer (funcall thunk))
@@ -146,13 +147,14 @@
                         (auth nil))
                   &body body)
   "Factory router macro"
+  (let ((body-var (intern "BODY" *package*)))
   `(easy-routes:defroute ,name (,path :method ,method) () 
     (block route
       (let* (,@(when parse-body
-                `((body (let ((raw (hunchentoot:raw-post-data :want-stream nil :force-text t)))
+                `((,body-var (let ((raw (hunchentoot:raw-post-data :want-stream nil :force-text t)))
                           (cond ((and raw (plusp (length raw))) (com.inuoe.jzon:parse raw))
                                 (t (make-hash-table :test 'equal))))))))
-         (declare (ignorable body))
+         (declare (ignorable ,@(when parse-body (list body-var))))
          ,(let ((inner (if auth
                          `(with-auth (,@auth) ,@body)
                          `(progn ,@body))))
