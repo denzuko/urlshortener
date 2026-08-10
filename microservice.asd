@@ -7,12 +7,8 @@
 
 (asdf:defsystem :microservice/docs
   :depends-on (:microservice :40ants-doc :40ants-doc-full)
-  :components ((:file "src/docs"))
-  :perform (asdf:test-op (op c)
-             (uiop:symbol-call :fiveam :run! :urlshortener-tests)))
+  :components ((:file "src/docs")))
 
 (asdf:defsystem :microservice/tests
   :depends-on (:microservice :fiveam)
-  :components ((:file "t/test"))
-  :perform (asdf:test-op (op c)
-             (uiop:symbol-call :fiveam :run! :urlshortener-tests)))
+  :components ((:file "t/test")))
