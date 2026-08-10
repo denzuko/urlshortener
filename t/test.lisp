@@ -10,10 +10,14 @@
 ;; setting up here instead. BKNR.DATASTORE is a singleton (one store per
 ;; Lisp session, per its own docs), so this happens once, at load time,
 ;; pointed at a throwaway directory rather than the real one.
-(make-instance 'bknr.datastore:mp-store
+(let ((test-store-dir (merge-pathnames "test-objstore/"
+                                       (uiop:temporary-directory))))
+  (when (uiop:directory-exists-p test-store-dir)
+    (uiop:delete-directory-tree test-store-dir :validate t))
+  (make-instance 'bknr.datastore:mp-store
                 :directory (merge-pathnames "test-objstore/"
                                              (uiop:temporary-directory))
-                :subsystems (list (make-instance 'bknr.datastore:store-object-subsystem)))
+                :subsystems (list (make-instance 'bknr.datastore:store-object-subsystem))))
 
 (def-suite urlshortener-tests)
 (in-suite urlshortener-tests)
