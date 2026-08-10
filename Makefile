@@ -1,17 +1,24 @@
 TARGET	:= microservice
 PREFIX	:= usr/local
 BUILDROOT	:= build/$(PREFIX)/bin
+MANROOT	:= build/$(PREFIX)/man/man1
 
-all: $(TARGET).tgz
+all: test doc $(TARGET).tgz
 
 $(BUILDROOT):
+	@mkdir -p $@
+
+$(MANROOT):
 	@mkdir -p $@
 
 $(BUILDROOT)/$(TARGET): $(BUILDROOT)
 	@ros dump executable $(TARGET).ros -o $@
 
-build/$(PREFIX)/man/man1:
-	@pandoc -s -t man build/microservice.md -o $<
+build/$(TARGET).md: $(TARGET).ros docs.ros
+	@ros docs.ros
+
+$(MANROOT)/$(TARGET).1: build/$(TARGET).md $(MANROOT)
+	@pandoc -s -t man build/microservice.md -o $@
 
 $(TARGET).tgz: $(BUILDROOT)/$(TARGET)
 	@tar zcvf $@ -C build $(shell echo "$(PREFIX)" | cut -d/ -f1)
@@ -19,8 +26,13 @@ $(TARGET).tgz: $(BUILDROOT)/$(TARGET)
 install: $(TARGET).tgz
 	@tar -C / -xzvf $<
 
+test: t/tests.ros 
+	@ros $<
+
+doc: $(MANROOT)/$(TARGET).1 docs.ros
+
 clean:
-	@rm -Rf build
+	@-rm -Rf build
 
 distclean: clean
-	@rm $(TARGET).tgz .*.swp
+	@-rm $(TARGET).tgz .*.swp

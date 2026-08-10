@@ -5,6 +5,7 @@ exec ros -Q -- $0 "$@"
 |#
 (progn ;;init forms
   (ros:ensure-asdf)
+  (asdf:load-asd (merge-pathnames "microservice.asd" *load-pathname*))
   #+quicklisp(ql:quickload '(
                              hunchentoot
                              easy-routes
@@ -12,31 +13,15 @@ exec ros -Q -- $0 "$@"
                              bknr.datastore
                              ironclad babel
                              bordeaux-threads
-                             cl-base64) :silent t)
-  )
+                             cl-base64) :silent t))
 
 (declaim (optimize (speed 3) (safety 1) (debug 1)))
 
-(defpackage :ros.script.microservice.3995270669/doc
-  (:use :cl :40ants-doc))
-
 (defpackage :ros.script.microservice.3995270669
-  (:use :cl))
-
-(in-package :ros.script.microservice.3995270669/doc)
-(defsection @microservice-manual (:title "microservice.ros — Roswell URL Shortener")
-  "A small Hunchentoot/easy-routes URL-shortener service, backed by
-   bknr.datastore, with JSON and Prometheus-text response modes."
-  (main function)
-  (route! macro)
-  (with-json macro)
-  (with-text macro)
-  (redirect! macro)
-  (notfound function)
-  (ok macro)
-  (make-shorten-url function)
-  (parse-args function)
-  (daemonize function))
+  (:use :cl :microservice)
+  (:export #:main
+           #:parse-args
+           #:daemonize))
 
 (in-package :ros.script.microservice.3995270669)
 
@@ -51,137 +36,23 @@ exec ros -Q -- $0 "$@"
 
 (defvar *start-time* (get-universal-time))
 
-(defclass shorten-url (bknr.datastore:store-object)
-  ((short-url :initarg :short-url
-              :reader shorten-url-short-url
-              :index-type bknr.datastore::string-unique-index
-              :index-reader shorten-url-by-short-url
-              :index-values all-shorten-urls)
-   (long-url  :initarg :long-url :reader shorten-url-long-url))
-  (:metaclass bknr.datastore:persistent-class))
-
-(defun make-shorten-url (long-url)
-  "Converts full URL to md5 hash"
-  (let ((data (babel:string-to-octets long-url :encoding :utf-8)))
-    (do* ((curr (ironclad:digest-sequence :md5 data)
-                (ironclad:digest-sequence :md5 curr))
-          (shrt (subseq (cl-base64:usb8-array-to-base64-string curr :uri t) 0 7)
-                (subseq (cl-base64:usb8-array-to-base64-string curr :uri t) 0 7)))
-      ((not (shorten-url-by-short-url shrt))
-       (values shrt (make-instance 'shorten-url :short-url shrt :long-url long-url))))))
-
-(defun plist->hash (x)
-  "Recursively converts plists (lists of alternating keyword keys and
-   values) into hash-tables so COM.INUOE.JZON:STRINGIFY serializes
-   them as JSON objects rather than arrays. Plain lists (already
-   hash-tables, or genuine sequences meant to stay JSON arrays) pass
-   through unconverted at that level."
-  (cond ((hash-table-p x)
-         (let ((h (make-hash-table :test 'equal)))
-           (maphash (lambda (k v) (setf (gethash k h) (plist->hash v))) x)
-           h))
-        ((and (consp x) (keywordp (car x)) (evenp (length x)))
-         (let ((h (make-hash-table :test 'equal)))
-           (loop for (k v) on x by #'cddr
-                 do (setf (gethash k h) (plist->hash v)))
-           h))
-        ((consp x) (mapcar #'plist->hash x))
-        (t x)))
-
-(defmacro with-text (&body body) "defines an easy-route handler for text"
-`(progn
-  (setf (hunchentoot:content-type*) "text/plain")
-  (handler-case
-      (progn ,@body)
-    (error (c)
-         (setf (hunchentoot:return-code*) hunchentoot:+http-internal-server-error+)
-         (format nil "Internal Server Error: ~a" c)))))
-
-(defmacro with-json (&body body)
-  "defines an easy-route handler"
-  `(progn
-     (setf (hunchentoot:content-type*) "application/json")
-     (handler-case
-       (let ((response (make-hash-table)))
-         (com.inuoe.jzon:stringify (progn ,@body)))
-       (error (c)
-         (setf (hunchentoot:return-code*) hunchentoot:+http-internal-server-error+)
-         (com.inuoe.jzon:stringify (list :|error| "Internal Server Error"
-                                         :|message| (format nil "~a" c)))))))
-
-(defmacro with-auth ((&key method) &body body)
-  "Authentication/authorization gate. :METHOD selects :KRB5, :OIDC, or
-   :AUTHZ. None are implemented yet -- each currently reports 501 via
-   UNIMPLIMENTED (fail-closed; BODY never runs) rather than silently
-   allowing access or erroring. When a real backend lands, its branch
-   should perform the credential check and COND the result into: BODY
-   on success, (NOTAUTHENTICATED ...) for missing/invalid credentials,
-   or (NOTAUTHORIZED ...) for valid-but-insufficient permission."
-  (declare (ignore body))
-  (ecase method
-    (:krb5  `(unimplimented "krb5 keytab auth"))
-    (:oidc  `(unimplimented "OIDC auth"))
-    (:authz `(unimplimented "authz auth"))))
-
-(defmacro ok ()
-  "Returns a json message on 200"
-  `(progn
-     (setf (hunchentoot:return-code*) 200)
-     (list :|status| 200 :|message| "OK")))
-
-(defun unimplimented (identifier)
-  "Returns a json message on 501"
-  (setf (hunchentoot:return-code*) 501)
-  (list :|error| "not found"
-        :|message| (format nil "~a not implimented" identifier)))
-
-(defun notfound (identifier)
-  "Returns a json message on 404"
-  (setf (hunchentoot:return-code*) 404)
-  (list :|error| "not found"
-        :|message| (format nil "~a not found" identifier)))
-
-(defun notauthenticated (identifier)
-  "Returns a json message on 401"
-  (setf (hunchentoot:return-code*) 401)
-  (list :|error| "not authorized"
-        :|message| (format nil "~a not authenticated" identifier)))
-
-(defun notauthorized (identifier)
-  "Returns a json message on 403"
-  (setf (hunchentoot:return-code*) 403)
-  (list :|error| "not authorized"
-        :|message| (format nil "~a not authorized" identifier)))
-
-(defmacro redirect! (url)
-  `(return-from route (hunchentoot:redirect ,url)))
-
-(defmacro route! ((&key name path (method :GET) (parse-body t) (content-type :json) (auth nil)) &body body)
-  "Factory router macro"
-  `(easy-routes:defroute ,name (,path :method ,method) () 
-    (block route
-      (let* (,@(when parse-body
-                `((body (let ((raw (hunchentoot:raw-post-data :want-stream nil :force-text t)))
-                          (cond ((and raw (plusp (length raw))) (com.inuoe.jzon:parse raw))
-                                (t (make-hash-table :test 'equal))))))))
-         (declare (ignorable body))
-         ,(let ((inner (if auth
-                         `(with-auth (,@auth) ,@body)
-                         `(progn ,@body))))
-            (ecase content-type
-              (:json `(with-json (plist-hash ,@body)))
-              (:text `(with-text ,@body))))))))
-
 (defun parse-args (argv)
   "Parses ARGV into options plist"
   (let ((opts (list :daemon nil :port nil :storage nil :help nil :log-path nil)))
     (loop while argv
           for arg = (pop argv)
           do (cond ((string= arg "-d") (setf (getf opts :daemon) t))
-                   ((string= arg "-p") (setf (getf opts :port) t))
                    ((string= arg "-h") (setf (getf opts :help) t))
                    ((string= arg "-s") (setf (getf opts :storage) (pop argv)))
                    ((string= arg "-l") (setf (getf opts :log-path) (pop argv)))
+                   ((string= arg "-p") 
+                    (let* ((port-str (pop argv))
+                           (parsed-num (and port-str (parse-integer port-str :junk-allowed t))))
+                      (cond ((and parsed-num (typep parsed-num '(unsigned-byte 16)))
+                             (setf (getf opts :port) parsed-num))
+                            (t (progn
+                                (warn "Port number ~s was not an unsigned-byte 16" port-str)
+                                (sb-ext:exit :code 1 :abort t))))))
                    (t (warn "Unknown argument: ~a" arg))))
     opts))
 
@@ -206,7 +77,7 @@ exec ros -Q -- $0 "$@"
   (declare (ignorable argv))
   (let ((opts (parse-args argv)))
     (cond ((getf opts :help)
-           (format t "Usage: microservice.ros [-d] [-p N] [-s PATH]~%")
+           (format t "Usage: microservice.ros [-d] [-p PORT_NUM] [-s STORAGE_PATH] [-l LOG_PATH]~%")
            (sb-ext:exit :code 0))
           (t
             (when (getf opts :port)     (setf *port*           (getf opts :port)))
@@ -225,17 +96,18 @@ exec ros -Q -- $0 "$@"
                  :subsystems (list
                              (make-instance 'bknr.datastore:store-object-subsystem)))
 
-(route! (:name handle-swagger :path "/swagger.json")
-  (list :|openapi| "3.0.3"
-        :|info| (list :|title| "URL Shortener" :|version| "1.0.0")
-        :|paths|
-        (list :|/|
-              (list :|post| (list :|summary| "Create a short URL"
-                                   :|responses| (list :|200| (list :|description| "Short URL created"))))
-              :|/{shrt}|
-              (list :|get|    (list :|summary| "Resolve and redirect"
-                                     :|responses| (list :|302| (list :|description| "Redirect to the long URL")
-                                                         :|404| (list :|description| "Short URL not found")))
+  (route! (:name handle-swagger :path "/swagger.json")
+          (list :|openapi| "3.0.3"
+                :|info| (list :|title| "URL Shortener" :|version| "1.0.0")
+                :|paths| (list :|/|
+                               (list :|post| (list :|summary| "Create a short URL"
+                                                   :|responses| (list :|200| 
+                                                                (list :|description| "Short URL created"))))
+                               :|/{shrt}|
+                               (list :|get|  (list :|summary| "Resolve and redirect"
+                                     :|responses| (list 
+                                     :|302| (list :|description| "Redirect to the long URL")
+                                     :|404| (list :|description| "Short URL not found")))
                     :|put|    (list :|summary| "Update (unimplemented)"
                                      :|responses| (list :|501| (list :|description| "Not implemented")))
                     :|delete| (list :|summary| "Delete (unimplemented)"
@@ -245,7 +117,7 @@ exec ros -Q -- $0 "$@"
                                   :|responses| (list :|200| (list :|description| "Metrics in Prometheus text format"))))
               :|/healthz|
               (list :|get| (list :|summary| "Health check"
-                                  :|responses| (list :|200| (list :|description| "Service is healthy"))))))
+                                  :|responses| (list :|200| (list :|description| "Service is healthy")))))))
 
   (route! (:name handle-metrics :path "/metrics" :content-type :text) 
           (format nil "~
@@ -261,16 +133,12 @@ urlshortener_urls_total ~D
 ))
 
   (route! (:name handle-healthz :path "/healthz") (ok))
+  
+  (route! (:name handle-root-delete :path "/:shrt" :method :PUT)
+          (unimplimented (format nil "root update (~a)" shrt)))
 
-  (route! (:name handle-root-update :path "/:shrt" :method :PUT) 
-    (progn
-      (declare (ignorable shrt))
-      (unimplimented "root update")))
-
-  (route! (:name handle-root-delete :path "/:shrt" :method :DELETE) 
-    (progn
-      (declare (ignorable shrt))
-      (unimplimented "root delete")))
+  (route! (:name handle-root-delete :path "/:shrt" :method :DELETE)
+          (unimplimented (format nil "root delete (~a)" shrt)))
 
   (route! (:name handle-root-read :path "/:shrt")
     (let ((url-obj (shorten-url-by-short-url shrt)))
@@ -280,8 +148,7 @@ urlshortener_urls_total ~D
   (route! (:name handle-root-create :path "/" :method :POST)
     (let* ((long-url (gethash "long-url" body))
            (shrt (make-shorten-url long-url)))
-      (setf (gethash "short-url" response) shrt)
-      response))
+      (list :|short-url| shrt)))
 
   (let ((shutdown-semaphore (bt:make-semaphore :name "server-shutdown")))
     #+sbcl

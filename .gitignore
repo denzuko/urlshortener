@@ -1,4 +1,6 @@
+build/**
 .qlot
-microservice
+*.tgz
 *.swp
 .*.swp
+microservice

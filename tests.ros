@@ -1,0 +1,24 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+(progn
+  (ros:ensure-asdf)
+  (asdf:load-asd (merge-pathnames "microservice.asd" *load-pathname*))
+  #+quicklisp(ql:quickload '(fiveam microservice/tests) :silent t))
+
+(declaim (optimize (speed 3) (safety 1) (debug 1)))
+
+(defpackage :ros.script.tests.3995270669
+  (:use :cl :microservice)
+  (:export #:main
+           #:parse-args))
+
+(in-package :ros.script.tests.3995270669)
+
+(defun main (&rest argv)
+  (declare (ignore argv))
+  (let ((all-passed (fiveam:run! (find-symbol "URLSHORTENER-TESTS" "MICROSERVICE/TESTS"))))
+    (sb-ext:exit :code (if all-passed 0 1))))
+;;; vim: set ft=lisp lisp:
