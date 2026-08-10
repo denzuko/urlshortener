@@ -36,25 +36,44 @@ exec ros -Q -- $0 "$@"
                                                  "objstore"
                                                  *schema-version*)))
 (defparameter *port* 11000)
-(defparameter *log-path* "/tmp/microservice.log")
+(defparameter *log-path* "/tmp/microservice.log")a
+
+(defmacro pop-config-value (key parse-form &body validations) 
+  "Pops a raw string from ARGV, evaluates PARSE-FORM (with ARG-VALUE
+   bound to that raw string) to produce a parsed value (bound to
+   PARSED-VALUE). Each entry in VALIDATIONS is (FAIL-TEST
+   ERROR-FORMAT) -- tried in order; the first FAIL-TEST that's true
+   warns using ERROR-FORMAT (given the raw string) and exits with
+   status 1. If no FAIL-TEST matches, KEY is set to PARSED-VALUE."
+  (let ((raw (gensym "RAW")))
+    `(let* ((,raw (pop argv))
+            (parsed-value (let ((arg-value ,raw)) ,parse-form)))
+       (cond ,@(loop for (fail-test error-format)
+                     in validations
+                     collect `(,fail-test (warn ,error-format ,raw)
+                                          (uiop:quit)))
+             (t (warn ,error-value ,raw) (uiop:quit))))))
+
+(defmacro set-config-boolean (key)
+  "Toggles KEY to T in enclosing OPTS plist"
+  `(setf (getf opts ,key) t))
 
 (defun parse-args (argv)
   "Parses ARGV into options plist"
   (let ((opts (list :daemon nil :port nil :storage nil :help nil :log-path nil)))
     (loop while argv
           for arg = (pop argv)
-          do (cond ((string= arg "-d") (setf (getf opts :daemon) t))
-                   ((string= arg "-h") (setf (getf opts :help) t))
-                   ((string= arg "-s") (setf (getf opts :storage) (pop argv)))
-                   ((string= arg "-l") (setf (getf opts :log-path) (pop argv)))
-                   ((string= arg "-p") 
-                    (let* ((port-str (pop argv))
-                           (parsed-num (and port-str (parse-integer port-str :junk-allowed t))))
-                      (cond ((and parsed-num (typep parsed-num '(unsigned-byte 16)))
-                             (setf (getf opts :port) parsed-num))
-                            (t (progn
-                                (warn "Port number ~s was not an unsigned-byte 16" port-str)
-                                (sb-ext:exit :code 1 :abort t))))))
+          do (cond ((string= arg "-d") (set-config-boolean :daemon))
+                   ((string= arg "-h") (set-config-boolean :help))
+                   ((string= arg "-s") (pop-config-value :storage
+                                                         (uiop:ensure-directory-pathname
+                                                           arg-value)))
+                   ((string= arg "-l") (pop-config-value :log-pat
+                                                         arg-value))
+                   ((string= arg "-p") (process-arg-value :port
+                                        (and arg-value (parse-integer port-str :junk-allowed t))
+                                        ((typep parsed-num '(integer 1025 65535))
+                                         "Port number ~s was not in range of 1025-65535")))
                    (t (warn "Unknown argument: ~a" arg))))
     opts))
 
@@ -90,16 +109,16 @@ exec ros -Q -- $0 "$@"
                                                                  (pathname-directory
                                                                    (parse-namestring 
                                                                      (getf opts :storage))))))))
-            (when (getf opts :daemon) (daemonize)))))
+            (when (getf opts :daemon) (daemonize))))
 
-  (ensure-directories-exist *object-storage* :verbose nil)
+      (ensure-directories-exist *object-storage* :verbose nil)
 
-  (make-instance 'bknr.datastore:mp-store
+      (make-instance 'bknr.datastore:mp-store
                  :directory *object-storage*
                  :subsystems (list
                              (make-instance 'bknr.datastore:store-object-subsystem)))
 
-  (route! (:name handle-swagger :path "/swagger.json")
+      (route! (:name handle-swagger :path "/swagger.json")
           (list :|openapi| "3.0.3"
                 :|info| (list :|title| "URL Shortener" :|version| "1.0.0")
                 :|paths| (list :|/|
@@ -122,7 +141,7 @@ exec ros -Q -- $0 "$@"
               (list :|get| (list :|summary| "Health check"
                                   :|responses| (list :|200| (list :|description| "Service is healthy")))))))
 
-  (route! (:name handle-metrics :path "/metrics" :content-type :text) 
+      (route! (:name handle-metrics :path "/metrics" :content-type :text) 
           (format nil "~
 # HELP urlshortener_uptime_seconds Seconds since the process started. 
 # TYPE urlshortener_uptime_seconds gauge
@@ -135,40 +154,40 @@ urlshortener_urls_total ~D
         (length (all-shorten-urls))
 ))
 
-  (route! (:name handle-healthz :path "/healthz") (ok))
+      (route! (:name handle-healthz :path "/healthz") (ok))
   
-  (route! (:name handle-root-update :path "/:shrt" :method :PUT)
+      (route! (:name handle-root-update :path "/:shrt" :method :PUT)
           (unimplimented (format nil "root update (~a)" shrt)))
 
-  (route! (:name handle-root-delete :path "/:shrt" :method :DELETE)
+      (route! (:name handle-root-delete :path "/:shrt" :method :DELETE)
           (unimplimented (format nil "root delete (~a)" shrt)))
 
-  (route! (:name handle-root-read :path "/:shrt")
-    (let ((url-obj (shorten-url-by-short-url shrt)))
+      (route! (:name handle-root-read :path "/:shrt")
+        (let ((url-obj (shorten-url-by-short-url shrt)))
           (cond (url-obj (redirect! (shorten-url-long-url url-obj)))
                 (t       (notfound shrt)))))
 
-  (route! (:name handle-root-create :path "/" :method :POST)
-    (let* ((long-url (gethash "long-url" body))
-           (shrt (make-shorten-url long-url)))
-      (list :|short-url| shrt)))
+      (route! (:name handle-root-create :path "/" :method :POST)
+        (let* ((long-url (gethash "long-url" body))
+               (shrt (make-shorten-url long-url)))
+          (list :|short-url| shrt)))
 
-  (let ((shutdown-semaphore (bt:make-semaphore :name "server-shutdown")))
-    #+sbcl
-    (sb-sys:enable-interrupt sb-unix:sigterm
+      (let ((shutdown-semaphore (bt:make-semaphore :name "server-shutdown")))
+        #+sbcl
+        (sb-sys:enable-interrupt sb-unix:sigterm
                               (lambda (&rest args)
                                 (declare (ignore args))
                                 (bt:signal-semaphore shutdown-semaphore)))
 
-    (setf acceptor (make-instance 'easy-routes:routes-acceptor :port *port*))
+        (setf acceptor (make-instance 'easy-routes:routes-acceptor :port *port*))
 
-    (hunchentoot:start acceptor)
-    (format t "Server started on port ~A...~%" *port*)
+        (hunchentoot:start acceptor)
+        (format t "Server started on port ~A...~%" *port*)
 
-    (handler-case (bt:wait-on-semaphore shutdown-semaphore)
-        (sb-sys:interactive-interrupt () (format t "~&Interrupt caught.~%")))
+        (handler-case (bt:wait-on-semaphore shutdown-semaphore)
+            (sb-sys:interactive-interrupt () (format t "~&Interrupt caught.~%")))
 
-    (format t "~&Shutting down...~%")
-    (hunchentoot:stop acceptor :soft t))
+        (format t "~&Shutting down...~%")
+        (hunchentoot:stop acceptor :soft t)))
 )
 ;;; vim: set ft=lisp lisp:
