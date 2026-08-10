@@ -29,36 +29,45 @@ exec ros -Q -- $0 "$@"
 (defvar *schema-version* "v1"
   "Bump anytime the object class gets updated so the objectstore doesn't break")
 
+(defparameter *port* 11000)
 (defparameter *object-storage* (make-pathname :directory 
                                               (list :absolute 
                                                  "dev"
                                                  "shm"
                                                  "objstore"
                                                  *schema-version*)))
-(defparameter *port* 11000)
 (defparameter *log-path* "/tmp/microservice.log")
 
-(defmacro pop-config-value (key parse-form &body validations) 
+(defstruct cli-opts 
+  (help     nil              :type boolean)
+  (daemon   nil              :type boolean)
+  (port     *port*           :type integer)
+  (storage  *object-storage* :type (or null pathname string))
+  (log-path *log-path*       :type (or null pathname string)))
+
+(defmacro pop-config-value (slot-name parse-form &body validations) 
   "Pops a raw string from ARGV, evaluates PARSE-FORM (with ARG-VALUE
    bound to that raw string) to produce a parsed value (bound to
    PARSED-VALUE). Each entry in VALIDATIONS is (FAIL-TEST
    ERROR-FORMAT) -- tried in order; the first FAIL-TEST that's true
    warns using ERROR-FORMAT (given the raw string) and exits with
    status 1. If no FAIL-TEST matches, KEY is set to PARSED-VALUE."
-  (let ((raw (gensym "RAW")))
+  (let ((raw (gensym "RAW"))
+        (setter (intern (string-upcase (format nil "cli-opts-~A" (symbol-name slot-name))))))
     `(let* ((,raw (pop argv))
             (parsed-value (let ((arg-value ,raw)) ,parse-form)))
        (cond ,@(loop for (fail-test error-format) in validations
                      collect `(,fail-test (warn ,error-format ,raw) (uiop:quit 1)))
-             (t (setf (getf opts ,key) parsed-value))))))
+             (t (setf (,setter opts) parsed-value))))))
 
-(defmacro set-config-boolean (key)
+(defmacro set-config-boolean (slot-name)
   "Toggles KEY to T in enclosing OPTS plist"
-  `(setf (getf opts ,key) t))
+  (let ((setter (intern (string-upcase (format nil "cli-opts-~A" (symbol-name slot-name))))))
+    `(setf (,setter opts) t)))
 
 (defun parse-args (argv)
   "Parses ARGV into options plist"
-  (let ((opts (list :daemon nil :port nil :storage nil :help nil :log-path nil)))
+  (let ((opts (make-cli-opts)))
     (loop while argv
           for arg = (pop argv)
           do (cond ((string= arg "-d") (set-config-boolean :daemon))
@@ -73,7 +82,7 @@ exec ros -Q -- $0 "$@"
                    (t (warn "Unknown argument: ~a" arg))))
     opts))
 
-(defun daemonize ()
+(defun daemonize (log-path)
   "fork and detach"
 #+sbcl
 (progn
@@ -81,7 +90,7 @@ exec ros -Q -- $0 "$@"
   (let ((pid (sb-posix:fork)))
     (cond ((plusp pid) (sb-ext:exit :code 0 :abort t))
           (t (sb-posix:setsid)
-             (let ((out (open *log-path*
+             (let ((out (open log-path
                               :direction :output
                               :if-exists :append
                               :if-does-not-exist :create)))
@@ -93,28 +102,23 @@ exec ros -Q -- $0 "$@"
 (defun main (&rest argv)
   (declare (ignorable argv))
   (let ((opts (parse-args argv))
-        (acceptor nil))
-    (cond ((getf opts :help)
-           (format t "Usage: microservice.ros [-d] [-p PORT_NUM] [-s STORAGE_PATH] [-l LOG_PATH]~%")
-           (uiop:quit 0))
-          (t
-            (when (getf opts :port)     (setf *port*           (getf opts :port)))
-            (when (getf opts :log-path) (setf *log-path*       (getf opts :log-path)))
-            (when (getf opts :storage)  (setf *object-storage* (make-pathname :directory 
-                                              (list* :absolute (rest 
-                                                                 (pathname-directory
-                                                                   (parse-namestring 
-                                                                     (getf opts :storage))))))))
-            (when (getf opts :daemon) (daemonize))))
+        (object-storage (uiop-ensure-directory-pathname (cli-opts-storage opts)))
+        (acceptor (make-instance 'easy-routes:routes-acceptor :port (cli-opts-port opts))))
 
-      (ensure-directories-exist *object-storage* :verbose nil)
+    (when (cli-opts-help opts)
+      (format t "Usage: microservice.ros [-d] [-p PORT_NUM] [-s STORAGE_PATH] [-l LOG_PATH]~%")
+      (uiop:quit 0))
 
-      (make-instance 'bknr.datastore:mp-store
-                 :directory *object-storage*
-                 :subsystems (list
-                             (make-instance 'bknr.datastore:store-object-subsystem)))
+    (when (cli-opts-daemon opts)
+      (daemonize (cli-opts-log-path opts)))
 
-      (route! (:name handle-swagger :path "/swagger.json")
+    (ensure-directories-exist object-storage :verbose nil)
+    (make-instance 'bknr.datastore:mp-store
+                   :directory (namestring object-storage)
+                   :subsystems (list
+                                 (make-instance 'bknr.datastore:store-object-subsystem)))
+
+    (route! (:name handle-swagger :path "/swagger.json")
           (list :|openapi| "3.0.3"
                 :|info| (list :|title| "URL Shortener" :|version| "1.0.0")
                 :|paths| (list :|/|
@@ -137,53 +141,50 @@ exec ros -Q -- $0 "$@"
               (list :|get| (list :|summary| "Health check"
                                   :|responses| (list :|200| (list :|description| "Service is healthy")))))))
 
-      (route! (:name handle-metrics :path "/metrics" :content-type :text) 
-          (format nil "~
+    (route! (:name handle-metrics :path "/metrics" :content-type :text) 
+        (format nil "~
 # HELP urlshortener_uptime_seconds Seconds since the process started. 
 # TYPE urlshortener_uptime_seconds gauge
 urlshortener_uptime_seconds ~D
 # HELP urlshortener_urls_total Total short URLS stored. 
 # TYPE urlshortener_urls_total gauge
 urlshortener_urls_total ~D
-"
-        (- (get-universal-time) *start-time*)
-        (length (all-shorten-urls))
-))
+" 
+               (- (get-universal-time) *start-time*)
+            (length (all-shorten-urls))))
 
-      (route! (:name handle-healthz :path "/healthz") (ok))
+    (route! (:name handle-healthz :path "/healthz") (ok))
   
-      (route! (:name handle-root-update :path "/:shrt" :method :PUT)
+    (route! (:name handle-root-update :path "/:shrt" :method :PUT)
           (unimplimented (format nil "root update (~a)" shrt)))
 
-      (route! (:name handle-root-delete :path "/:shrt" :method :DELETE)
+    (route! (:name handle-root-delete :path "/:shrt" :method :DELETE)
           (unimplimented (format nil "root delete (~a)" shrt)))
 
-      (route! (:name handle-root-read :path "/:shrt")
+    (route! (:name handle-root-read :path "/:shrt")
         (let ((url-obj (shorten-url-by-short-url shrt)))
           (cond (url-obj (redirect! (shorten-url-long-url url-obj)))
                 (t       (notfound shrt)))))
 
-      (route! (:name handle-root-create :path "/" :method :POST)
+    (route! (:name handle-root-create :path "/" :method :POST)
         (let* ((long-url (gethash "long-url" body))
                (shrt (make-shorten-url long-url)))
           (list :|short-url| shrt)))
 
-      (let ((shutdown-semaphore (bt:make-semaphore :name "server-shutdown")))
+    (let ((shutdown-semaphore (bt:make-semaphore :name "server-shutdown")))
         #+sbcl
         (sb-sys:enable-interrupt sb-unix:sigterm
                               (lambda (&rest args)
                                 (declare (ignore args))
                                 (bt:signal-semaphore shutdown-semaphore)))
 
-        (setf acceptor (make-instance 'easy-routes:routes-acceptor :port *port*))
-
         (hunchentoot:start acceptor)
-        (format t "Server started on port ~A...~%" *port*)
+        (format t "Server started on port ~A...~%" (cli-opts-port opts))
 
         (handler-case (bt:wait-on-semaphore shutdown-semaphore)
             (sb-sys:interactive-interrupt () (format t "~&Interrupt caught.~%")))
 
         (format t "~&Shutting down...~%")
-        (hunchentoot:stop acceptor :soft t)))
+        (hunchentoot:stop acceptor :soft t))
 )
 ;;; vim: set ft=lisp lisp:
