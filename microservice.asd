@@ -6,8 +6,8 @@
   :in-order-to ((asdf:test-op (asdf:test-op :microservice/tests))))
 
 (asdf:defsystem :microservice/docs
-  :depends-on (:microservice :40ants-docs :40ants-doc-full)
-  :components ((:file "src/doc"))
+  :depends-on (:microservice :40ants-doc :40ants-doc-full)
+  :components ((:file "src/docs"))
   :perform (asdf:test-op (op c)
              (uiop:symbol-call :fiveam :run! :urlshortener-tests)))
 

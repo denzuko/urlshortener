@@ -21,6 +21,4 @@
   (microservice:notauthorized function)
   (microservice:make-shorten-url function)
   (microservice:shorten-url class)
-  (microservice:plist->hash function)
-  (microservice:parse-args function))
-
+  (microservice:plist->hash function))

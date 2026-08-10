@@ -6,14 +6,14 @@ exec ros -Q -- $0 "$@"
 (progn ;;init forms
   (ros:ensure-asdf)
   (asdf:load-asd (merge-pathnames "microservice.asd" *load-pathname*))
-  #+quicklisp(ql:quickload '(
-                             hunchentoot
-                             easy-routes
-                             com.inuoe.jzon
-                             bknr.datastore
-                             ironclad babel
-                             bordeaux-threads
-                             cl-base64) :silent t))
+  #+quicklisp(ql:quickload '(:microservice
+                             :hunchentoot
+                             :easy-routes
+                             :com.inuoe.jzon
+                             :bknr.datastore
+                             :ironclad babel
+                             :bordeaux-threads
+                             :cl-base64) :silent t))
 
 (declaim (optimize (speed 3) (safety 1) (debug 1)))
 

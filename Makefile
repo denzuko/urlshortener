@@ -26,7 +26,7 @@ $(TARGET).tgz: $(BUILDROOT)/$(TARGET)
 install: $(TARGET).tgz
 	@tar -C / -xzvf $<
 
-test: t/tests.ros 
+test: tests.ros 
 	@ros $<
 
 doc: $(MANROOT)/$(TARGET).1 docs.ros
