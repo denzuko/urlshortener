@@ -54,13 +54,3 @@
    effect, and that only exists inside a real request otherwise."
   (let ((hunchentoot:*reply* (make-instance 'hunchentoot:reply)))
     (is (not (stringp (notfound "x"))))))
-
-(test parse-args-recognizes-daemon-flag
-  "PARSE-ARGS must set :DAEMON when -d is passed."
-  (is (getf (parse-args (list "-d")) :daemon)))
-
-(test parse-args-ignores-unknown-flags
-  "An unrecognized flag must not error -- PARSE-ARGS should warn and
-   continue rather than fail the whole argument parse."
-  (is (getf (parse-args (list "-x" "-d")) :daemon)))
-

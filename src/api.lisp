@@ -20,6 +20,8 @@
            #:notauthenticated
            #:notauthorized
            #:make-shorten-url
+           #:shorten-url-long-url
+           #:shorten-url-by-short-url
            #:shorten-url
            #:plist->hash))
 
