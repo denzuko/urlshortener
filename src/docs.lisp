@@ -1,9 +1,9 @@
 (ql:quickload '(40ants-doc 40ants-doc-full) :silent t)
 
-(defpackage :microservice/doc
+(defpackage :microservice/docs
   (:use :cl :40ants-doc :microservice))
 
-(in-package :microservice/doc)
+(in-package :microservice/docs)
 
 (defsection @microservice-manual (:title "microservice.ros — Roswell URL Shortener")
   "A small Hunchentoot/easy-routes URL-shortener service, backed by
