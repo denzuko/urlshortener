@@ -101,7 +101,7 @@ exec ros -Q -- $0 "$@"
 
 (defun main (&rest argv)
   (declare (ignorable argv))
-  (let ((opts (parse-args argv))
+  (let* ((opts (parse-args argv))
         (object-storage (uiop:ensure-directory-pathname (cli-opts-storage opts)))
         (acceptor (make-instance 'easy-routes:routes-acceptor :port (cli-opts-port opts))))
 
@@ -186,5 +186,5 @@ urlshortener_urls_total ~D
 
         (format t "~&Shutting down...~%")
         (hunchentoot:stop acceptor :soft t))
-)
+))
 ;;; vim: set ft=lisp lisp:
