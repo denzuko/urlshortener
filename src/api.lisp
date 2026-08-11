@@ -47,6 +47,17 @@
       ((not (shorten-url-by-short-url shrt))
        (values shrt (make-instance 'shorten-url :short-url shrt :long-url long-url))))))
 
+(defstruct create-request
+  "Validation payload for POST /"
+  (long-url nil :type (or null string)))
+
+(defun parse-create-request (body)
+  "Validates adn extracts a create-request from the paresed json BODY
+  Hashtable. Returns the struct on success or nil if slots are missing/invalid"
+  (let ((long-url (gethash "long-url" body)))
+    (when (and long-url (stringp long-url) (plusp (length long-url)))
+      (make-create-request :long-url long-url))))
+
 (defun plist->hash (x)
   "Recursively converts plists (lists of alternating keyword keys and
    values) into hash-tables so com.inuoe.jzon:stringify serializes
@@ -88,9 +99,9 @@
   `(call-with-response "application/json"
                        #'com.inuoe.jzon:stringify
                        (lambda (c)
-                         (com.inuoe.jzon:stringify (list 
+                         (com.inuoe.jzon:stringify ((plist->hash (list 
                                         :|error| "Internal Server Error"
-                                        :|message| (format nil "~a" c))))
+                                        :|message| (format nil "~a" c)))))
                        (lambda () (progn ,@body))))
 
 (defmacro with-auth ((&key method) &body body)
@@ -107,35 +118,24 @@
     (:oidc  `(unimplimented "OIDC auth"))
     (:authz `(unimplimented "authz auth"))))
 
-(defmacro ok ()
-  "Returns a json message on 200"
-  `(progn
-     (setf (hunchentoot:return-code*) 200)
-     (list :|status| 200 :|message| "OK")))
+(defmacro defresponse (name code message-format (&optional error-format))
+  "Defines a function NAME tat takes an IDENIFIER and sets http status CODE
+  then returns a json object. If ERROR-TEXT is given, the payload adds it.
+  Otherwise message payload is sent"
+  `(defun ,name (identifier)
+     ,(format nil "Returns a json message on ~d" code)
+     (setf (hunchentoot:return-code*) ,code)
+     ,(if (error-text) 
+          `(list :|error| ,error-text 
+                 :|message| (format nil ,message-format identifier))
+          `(list :|message| (format nil ,message-format identifier))))))
 
-(defun unimplimented (identifier)
-  "Returns a json message on 501"
-  (setf (hunchentoot:return-code*) 501)
-  (list :|error| "not found"
-        :|message| (format nil "~a not implimented" identifier)))
-
-(defun notfound (identifier)
-  "Returns a json message on 404"
-  (setf (hunchentoot:return-code*) 404)
-  (list :|error| "not found"
-        :|message| (format nil "~a not found" identifier)))
-
-(defun notauthenticated (identifier)
-  "Returns a json message on 401"
-  (setf (hunchentoot:return-code*) 401)
-  (list :|error| "not authorized"
-        :|message| (format nil "~a not authenticated" identifier)))
-
-(defun notauthorized (identifier)
-  "Returns a json message on 403"
-  (setf (hunchentoot:return-code*) 403)
-  (list :|error| "not authorized"
-        :|message| (format nil "~a not authorized" identifier)))
+(defresponse badrequest       400 "~a" "bad request")
+(defresponse notfound         404 "~a not found" "not found")
+(defresponse notauthenticated 401 "~a not authenticated" "not authorized")
+(defresponse notauthorized    403 "~a not authorized" "not authorized")
+(defresponse unimplemented    501 "~a not implimented" "not found")
+(defresponse ok               200 "OK")
 
 (defmacro redirect! (url)
   `(return-from route (hunchentoot:redirect ,url)))
